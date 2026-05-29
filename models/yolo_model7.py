@@ -4,14 +4,12 @@ import json
 import os
 
 
-# ==========================================
 # 1. LOAD EXTERNAL CONFIGURATION
-# Τώρα διαβάζει τα variants από το εξωτερικό JSON με απόλυτο path
-# ==========================================
+
 def load_config(config_filename="yolo7_config.json"):
-    # Βρίσκει τον φάκελο στον οποίο βρίσκεται αυτό ακριβώς το script (δηλαδή τον φάκελο models)
+
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Φτιάχνει το πλήρες path ενώνοντας τον φάκελο με το όνομα του json
+
     config_path = os.path.join(current_dir, config_filename)
 
     if not os.path.exists(config_path):
@@ -21,13 +19,11 @@ def load_config(config_filename="yolo7_config.json"):
         return json.load(f)
 
 
-# Φόρτωση των ρυθμίσεων
 MODEL_CONFIGS = load_config()
 
 
-# ==========================================
 # 2. BUILDING BLOCKS
-# ==========================================
+
 def CBS(x, filters, kernel_size, strides=1, name=None):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding='same', use_bias=False,
                       name=name + '_conv' if name else None)(x)
@@ -54,9 +50,8 @@ def SPP_Block(x, filters, name="spp"):
     return CBS(merged, filters, 1, name=name)
 
 
-# ==========================================
-# 3. THE DYNAMIC MODEL BUILDER
-# ==========================================
+# 3.  MODEL BUILDER
+
 def build_yolo_model(variant="tiny", input_shape=(416, 416, 3), num_classes=20):
     if variant not in MODEL_CONFIGS:
         raise ValueError(f"Το variant '{variant}' δεν υπάρχει στο JSON. Διαθέσιμα: {list(MODEL_CONFIGS.keys())}")
@@ -64,7 +59,7 @@ def build_yolo_model(variant="tiny", input_shape=(416, 416, 3), num_classes=20):
     cfg = MODEL_CONFIGS[variant]
     inputs = tf.keras.Input(shape=input_shape)
 
-    # === BACKBONE ===
+    #  BACKBONE
     x = CBS(inputs, cfg["stem"][0], 3, 2, name="stem_1")
     x = CBS(x, cfg["stem"][1], 3, 2, name="stem_2")
 
@@ -76,7 +71,7 @@ def build_yolo_model(variant="tiny", input_shape=(416, 416, 3), num_classes=20):
 
     p5 = ELAN_Block(x, cfg["stages"][2], name="backbone_p5")
 
-    # === NECK ===
+    #  NECK
     spp_out = SPP_Block(p5, cfg["stages"][2], name="spp")
 
     up_p5 = layers.UpSampling2D(2)(CBS(spp_out, cfg["stages"][1], 1))
@@ -93,7 +88,7 @@ def build_yolo_model(variant="tiny", input_shape=(416, 416, 3), num_classes=20):
     down_p4 = layers.MaxPooling2D(2, 2)(neck_out_medium)
     neck_out_large = ELAN_Block(layers.Concatenate(-1)([down_p4, spp_out]), cfg["stages"][2], name="neck_out_large")
 
-    # === HEAD ===
+    #  HEAD
     out_channels = 3 * (5 + num_classes)
     out_small = layers.Conv2D(out_channels, 1, name="detect_small")(CBS(neck_out_small, cfg["head"][0], 3))
     out_medium = layers.Conv2D(out_channels, 1, name="detect_medium")(CBS(neck_out_medium, cfg["head"][1], 3))
@@ -102,21 +97,21 @@ def build_yolo_model(variant="tiny", input_shape=(416, 416, 3), num_classes=20):
     return Model(inputs, [out_small, out_medium, out_large], name=f"YOLOv7_{variant.capitalize()}")
 
 
-# ==========================================
+
 # 4. EXECUTION
-# ==========================================
+
 if __name__ == "__main__":
-    # Testάρουμε αν φορτώνει σωστά το config
+
     variant = "tiny"
     model = build_yolo_model(variant=variant)
 
-    print(f"\n📊 --- Στατιστικά Μοντέλου: {variant.upper()} (Loaded from JSON) ---")
+    print(f"\n  Στατιστικά Μοντέλου: {variant.upper()} (Loaded from JSON) ")
     print(f"Συνολικές Παράμετροι: {model.count_params():,}")
 
-    # 1. Εμφανίζει τον αναλυτικό πίνακα με τα layers
+
     model.summary()
 
-    # 2. Αποθηκεύει το μοντέλο σε αρχείο .h5
-    save_filename = f"yolov7_{variant}_true_match.h5"
+
+    save_filename = f"yolov7_{variant}.h5"
     model.save(save_filename)
-    print(f"\n✅ Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
+    print(f"\n Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")

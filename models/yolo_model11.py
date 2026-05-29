@@ -4,9 +4,9 @@ import json
 import os
 
 
-# ==========================================
+
 # 1. LOAD EXTERNAL CONFIGURATION
-# ==========================================
+
 def load_config(config_path="yolo11_config.json"):
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"⚠️ Το αρχείο {config_path} δεν βρέθηκε!")
@@ -17,9 +17,9 @@ def load_config(config_path="yolo11_config.json"):
 MODEL_CONFIGS = load_config()
 
 
-# ==========================================
-# 2. YOLO11 EXACT BUILDING BLOCKS
-# ==========================================
+
+# 2.  BUILDING BLOCKS
+
 def CBS(x, filters, kernel_size, strides=1, groups=1, act=True, name=None):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding='same',
                       groups=groups, use_bias=False, name=name + '_conv' if name else None)(x)
@@ -78,7 +78,7 @@ def Attention(x, dim, num_heads=4, attn_ratio=0.5, name=None):
     nh_kd = key_dim * num_heads
     h = dim + nh_kd * 2
 
-    # Ακριβής διατήρηση παραμέτρων QKV και Proj
+
     qkv = layers.Conv2D(h, 1, use_bias=False, name=name + "_qkv")(x)
     pe = layers.Conv2D(dim, 3, padding='same', groups=dim, use_bias=False, name=name + "_pe")(x)
     proj = layers.Conv2D(dim, 1, use_bias=False, name=name + "_proj")
@@ -130,7 +130,7 @@ def SPPF_Block(x, c2, pool_size=5, name="sppf"):
 
 
 def Detect(x, num_classes=80, reg_max=16, name="detect"):
-    # Το επίσημο Decoupled Head με DFL
+    # Decoupled Head με DFL
     ch0 = x[0].shape[-1]
     c2 = max(16, ch0 // 4, reg_max * 4)
     c3 = max(ch0, min(num_classes, 100))
@@ -152,22 +152,22 @@ def Detect(x, num_classes=80, reg_max=16, name="detect"):
     return outputs
 
 
-# ==========================================
-# 3. THE DYNAMIC MODEL BUILDER
-# ==========================================
+
+# 3. MODEL BUILDER
+
 def build_yolo_model(variant="nano", input_shape=(640, 640, 3)):
     if variant not in MODEL_CONFIGS:
         raise ValueError(f"Το variant '{variant}' δεν υπάρχει στο JSON.")
 
     cfg = MODEL_CONFIGS[variant]
     nc = cfg["nc"]
-    n = cfg["n"]  # <--- Πλέον διαβάζει το βάθος από το JSON!
+    n = cfg["n"]
     ch = cfg["ch"]
     head_ch = cfg["head_ch"]
 
     inputs = tf.keras.Input(shape=input_shape)
 
-    # === BACKBONE ===
+    #  BACKBONE
     x = CBS(inputs, ch[0], 3, 2, name="layer0")
     x = CBS(x, ch[1], 3, 2, name="layer1")
     x = C3k2_Block(x, ch[2], n=n, c3k=False, name="layer2_c3k2")  # Βάζουμε n=n παντού
@@ -183,7 +183,7 @@ def build_yolo_model(variant="nano", input_shape=(640, 640, 3)):
     x = SPPF_Block(x, ch[9], name="layer9_sppf")
     p5 = C2PSA(x, ch[10], n=n, name="layer10_c2psa")  # Feature P5
 
-    # === NECK & HEAD ===
+    #  NECK & HEAD
     up1 = layers.UpSampling2D(2, interpolation="nearest", name="layer11_up")(p5)
     cat1 = layers.Concatenate(axis=-1, name="layer12_cat")([up1, p4])
     neck_p4 = C3k2_Block(cat1, head_ch[0], n=n, c3k=False, name="layer13_c3k2")
@@ -200,23 +200,23 @@ def build_yolo_model(variant="nano", input_shape=(640, 640, 3)):
     cat4 = layers.Concatenate(axis=-1, name="layer21_cat")([down2, p5])
     out_large = C3k2_Block(cat4, head_ch[3], n=n, c3k=True, name="layer22_c3k2")
 
-    # === DETECT HEAD ===
+    #  DETECT HEAD
     detect_out = Detect([out_small, out_medium, out_large], num_classes=nc, reg_max=16, name="detect")
 
     return Model(inputs, detect_out, name=f"YOLO11_{variant.capitalize()}")
 
-# ==========================================
+
 # 4. EXECUTION
-# ==========================================
+
 if __name__ == "__main__":
     variant = "nano"
     model = build_yolo_model(variant=variant)
 
-    print(f"\n📊 --- Στατιστικά Μοντέλου: {variant.upper()} (Loaded from JSON) ---")
+    print(f"\n Στατιστικά Μοντέλου: {variant.upper()} (Loaded from JSON) ")
     print(f"Συνολικές Παράμετροι: {model.count_params():,}")
 
     model.summary()
 
     save_filename = f"yolo11_{variant}.h5"
     model.save(save_filename)
-    print(f"\n✅ Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
+    print(f"\n Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
