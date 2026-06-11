@@ -4,16 +4,16 @@ import json
 import os
 
 
-
+# =====================================================================
 # 1. LOAD EXTERNAL CONFIGURATION
-
+# =====================================================================
 
 def load_config(config_filename="yolo11_config.json"):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(current_dir, config_filename)
 
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f" Σφάλμα: Το αρχείο ρυθμίσεων '{config_path}' δεν βρέθηκε!")
+        raise FileNotFoundError(f"⚠️ Σφάλμα: Το αρχείο ρυθμίσεων '{config_path}' δεν βρέθηκε!")
 
     with open(config_path, "r") as f:
         return json.load(f)
@@ -22,7 +22,9 @@ def load_config(config_filename="yolo11_config.json"):
 MODEL_CONFIGS = load_config()
 
 
+# =====================================================================
 # 2. BUILDING BLOCKS (ΔΟΜΙΚΑ ΣΤΟΙΧΕΙΑ)
+# =====================================================================
 
 def CBS(x, filters, kernel_size, strides=1, groups=1, act=True, name=None):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding='same',
@@ -89,7 +91,6 @@ def Attention(x, dim, num_heads=4, attn_ratio=0.5, name=None):
     # Positional Encoding (PE) με Batch Normalization
     pe = layers.Conv2D(dim, 3, padding='same', groups=dim, use_bias=False, name=name + "_pe_conv")(x)
     pe = layers.BatchNormalization(name=name + "_pe_bn")(pe)
-
 
     v = layers.Lambda(lambda t: t[:, :, :, nh_kd * 2:], name=name + "_v")(qkv)
 
@@ -173,7 +174,9 @@ def Detect(x, num_classes=80, reg_max=16, name="detect"):
     return outputs
 
 
+# =====================================================================
 # 3. MODEL BUILDER
+# =====================================================================
 
 def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     if variant not in MODEL_CONFIGS:
@@ -185,40 +188,43 @@ def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     ch = cfg["ch"]
     head_ch = cfg["head_ch"]
 
+    # Διαβάζουμε τα δυναμικά c3k flags από το JSON.
+    c3k_flags = cfg.get("c3k", [False, False, True, True, False, False, False, True])
+
     inputs = tf.keras.Input(shape=input_shape)
 
     #  BACKBONE
     x = CBS(inputs, ch[0], 3, 2, name="layer0")
     x = CBS(x, ch[1], 3, 2, name="layer1")
-    x = C3k2_Block(x, ch[2], n=n, c3k=False, e=0.25, name="layer2_c3k2")
+    x = C3k2_Block(x, ch[2], n=n, c3k=c3k_flags[0], e=0.25, name="layer2_c3k2")
     x = CBS(x, ch[3], 3, 2, name="layer3")
 
-    p3 = C3k2_Block(x, ch[4], n=n, c3k=False, e=0.25, name="layer4_c3k2")
+    p3 = C3k2_Block(x, ch[4], n=n, c3k=c3k_flags[1], e=0.25, name="layer4_c3k2")
     x = CBS(p3, ch[5], 3, 2, name="layer5")
 
-    p4 = C3k2_Block(x, ch[6], n=n, c3k=True, e=0.5, name="layer6_c3k2")
+    p4 = C3k2_Block(x, ch[6], n=n, c3k=c3k_flags[2], e=0.5, name="layer6_c3k2")
     x = CBS(p4, ch[7], 3, 2, name="layer7")
 
-    x = C3k2_Block(x, ch[8], n=n, c3k=True, e=0.5, name="layer8_c3k2")
+    x = C3k2_Block(x, ch[8], n=n, c3k=c3k_flags[3], e=0.5, name="layer8_c3k2")
     x = SPPF_Block(x, ch[9], name="layer9_sppf")
     p5 = C2PSA(x, ch[10], n=n, e=0.5, name="layer10_c2psa")
 
     #  NECK
     up1 = layers.UpSampling2D(2, interpolation="nearest", name="layer11_up")(p5)
     cat1 = layers.Concatenate(axis=-1, name="layer12_cat")([up1, p4])
-    neck_p4 = C3k2_Block(cat1, head_ch[0], n=n, c3k=False, e=0.5, name="layer13_c3k2")
+    neck_p4 = C3k2_Block(cat1, head_ch[0], n=n, c3k=c3k_flags[4], e=0.5, name="layer13_c3k2")
 
     up2 = layers.UpSampling2D(2, interpolation="nearest", name="layer14_up")(neck_p4)
     cat2 = layers.Concatenate(axis=-1, name="layer15_cat")([up2, p3])
-    out_small = C3k2_Block(cat2, head_ch[1], n=n, c3k=False, e=0.5, name="layer16_c3k2")
+    out_small = C3k2_Block(cat2, head_ch[1], n=n, c3k=c3k_flags[5], e=0.5, name="layer16_c3k2")
 
     down1 = CBS(out_small, head_ch[1], 3, 2, name="layer17")
     cat3 = layers.Concatenate(axis=-1, name="layer18_cat")([down1, neck_p4])
-    out_medium = C3k2_Block(cat3, head_ch[2], n=n, c3k=False, e=0.5, name="layer19_c3k2")
+    out_medium = C3k2_Block(cat3, head_ch[2], n=n, c3k=c3k_flags[6], e=0.5, name="layer19_c3k2")
 
     down2 = CBS(out_medium, head_ch[2], 3, 2, name="layer20")
     cat4 = layers.Concatenate(axis=-1, name="layer21_cat")([down2, p5])
-    out_large = C3k2_Block(cat4, head_ch[3], n=n, c3k=True, e=0.5, name="layer22_c3k2")
+    out_large = C3k2_Block(cat4, head_ch[3], n=n, c3k=c3k_flags[7], e=0.5, name="layer22_c3k2")
 
     #  DETECT HEAD
     detect_out = Detect([out_small, out_medium, out_large], num_classes=nc, reg_max=16, name="detect")
@@ -226,15 +232,17 @@ def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     return Model(inputs, detect_out, name=f"YOLO11_{variant.capitalize()}")
 
 
+# =====================================================================
 # 4. EXECUTION
+# =====================================================================
 
 if __name__ == "__main__":
-    # Choose from  "nano", "small", "medium", "large", "xlarge"
-    variant = "nano"
+    # Δοκίμασε τα όλα: "nano", "small", "medium", "large", "xlarge"
+    variant = "xlarge"
 
     model = build_yolo11_model(variant=variant)
 
-    print(f"\n Στατιστικά Μοντέλου TensorFlow: YOLO11-{variant.upper()}")
+    print(f"\n🚀 Στατιστικά Μοντέλου TensorFlow: YOLO11-{variant.upper()}")
     print(f"Συνολικές Παράμετροι: {model.count_params():,}")
     print("-" * 65)
 
@@ -242,4 +250,4 @@ if __name__ == "__main__":
 
     save_filename = f"yolo11_{variant}.keras"
     model.save(save_filename)
-    print(f"\n Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
+    print(f"\n💾 Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
