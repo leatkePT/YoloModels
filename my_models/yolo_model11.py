@@ -3,17 +3,15 @@ from tensorflow.keras import layers, Model
 import json
 import os
 
-
-# =====================================================================
 # 1. LOAD EXTERNAL CONFIGURATION
-# =====================================================================
+
 
 def load_config(config_filename="yolo11_config.json"):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(current_dir, config_filename)
 
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f"⚠️ Σφάλμα: Το αρχείο ρυθμίσεων '{config_path}' δεν βρέθηκε!")
+        raise FileNotFoundError(f"️ Σφάλμα: Το αρχείο ρυθμίσεων '{config_path}' δεν βρέθηκε!")
 
     with open(config_path, "r") as f:
         return json.load(f)
@@ -22,9 +20,7 @@ def load_config(config_filename="yolo11_config.json"):
 MODEL_CONFIGS = load_config()
 
 
-# =====================================================================
-# 2. BUILDING BLOCKS (ΔΟΜΙΚΑ ΣΤΟΙΧΕΙΑ)
-# =====================================================================
+# 2. BUILDING BLOCKS
 
 def CBS(x, filters, kernel_size, strides=1, groups=1, act=True, name=None):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding='same',
@@ -51,7 +47,7 @@ def C3k(x, c2, n=1, shortcut=True, g=1, e=0.5, name=None):
 
     y = cv1
     for i in range(n):
-        # To εσωτερικό bottleneck του C3k έχει e=1.0
+
         y = Bottleneck(y, c_, shortcut=shortcut, g=g, e=1.0, name=f"{name}_m_{i}")
 
     cat = layers.Concatenate(axis=-1, name=name + "_cat")([y, cv2])
@@ -142,12 +138,12 @@ def SPPF_Block(x, c2, pool_size=5, name="sppf"):
 
 
 def DWConv_Block(x, ch_out, name=None):
-    """Depthwise-Separable Convolution για την κεφαλή κλάσεων cv3"""
+
     y = layers.DepthwiseConv2D(kernel_size=3, strides=1, padding='same', use_bias=False, name=name + "_dw_conv")(x)
     y = layers.BatchNormalization(name=name + "_dw_bn")(y)
     y = layers.Activation('swish', name=name + "_dw_swish")(y)
 
-    # FIX: Προσθήκη ρητά kernel_size=1
+
     y = CBS(y, filters=ch_out, kernel_size=1, strides=1, name=name + "_pw")
     return y
 
@@ -174,9 +170,8 @@ def Detect(x, num_classes=80, reg_max=16, name="detect"):
     return outputs
 
 
-# =====================================================================
+
 # 3. MODEL BUILDER
-# =====================================================================
 
 def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     if variant not in MODEL_CONFIGS:
@@ -188,7 +183,7 @@ def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     ch = cfg["ch"]
     head_ch = cfg["head_ch"]
 
-    # Διαβάζουμε τα δυναμικά c3k flags από το JSON.
+
     c3k_flags = cfg.get("c3k", [False, False, True, True, False, False, False, True])
 
     inputs = tf.keras.Input(shape=input_shape)
@@ -232,17 +227,15 @@ def build_yolo11_model(variant="nano", input_shape=(640, 640, 3)):
     return Model(inputs, detect_out, name=f"YOLO11_{variant.capitalize()}")
 
 
-# =====================================================================
 # 4. EXECUTION
-# =====================================================================
 
 if __name__ == "__main__":
-    # Δοκίμασε τα όλα: "nano", "small", "medium", "large", "xlarge"
-    variant = "xlarge"
+    # Swich size: "nano", "small", "medium", "large", "xlarge"
+    variant = "nano"
 
     model = build_yolo11_model(variant=variant)
 
-    print(f"\n🚀 Στατιστικά Μοντέλου TensorFlow: YOLO11-{variant.upper()}")
+    print(f"\n Στατιστικά Μοντέλου TensorFlow: YOLO11-{variant.upper()}")
     print(f"Συνολικές Παράμετροι: {model.count_params():,}")
     print("-" * 65)
 
@@ -250,4 +243,4 @@ if __name__ == "__main__":
 
     save_filename = f"yolo11_{variant}.keras"
     model.save(save_filename)
-    print(f"\n💾 Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
+    print(f"\n Το μοντέλο αποθηκεύτηκε επιτυχώς στο αρχείο: {save_filename}")
