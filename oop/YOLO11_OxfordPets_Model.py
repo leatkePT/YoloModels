@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import random
 import numpy as np
 import csv
@@ -11,54 +10,64 @@ from tqdm import tqdm
 import tensorflow as tf
 import keras_cv
 
-# === SERVER OPTIMIZATIONS ===
+# ---------------------------------------------------------
+# Server Optimizations
+# Uncomment the following lines if running on AUTH HPC.
+# ---------------------------------------------------------
 # os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=/usr/local/cuda'
 # os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # tf.config.optimizer.set_jit(False)
 
+# Add the parent directory to the path to locate the 'my_models' directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from my_models.yolo_model11 import build_yolo11_model
 
 
-# =======================================================
-# SOTA YOLO LOSS & DECODER FUNCTIONS
-# =======================================================
+# ---------------------------------------------------------
+# SOTA YOLOv11 Loss Functions (CIoU Component)
+# ---------------------------------------------------------
 def bbox_ciou(b1_xy, b1_wh, b2_xy, b2_wh):
     b1_xmin, b1_ymin = b1_xy[..., 0] - b1_wh[..., 0] / 2.0, b1_xy[..., 1] - b1_wh[..., 1] / 2.0
     b1_xmax, b1_ymax = b1_xy[..., 0] + b1_wh[..., 0] / 2.0, b1_xy[..., 1] + b1_wh[..., 1] / 2.0
     b2_xmin, b2_ymin = b2_xy[..., 0] - b2_wh[..., 0] / 2.0, b2_xy[..., 1] - b2_wh[..., 1] / 2.0
     b2_xmax, b2_ymax = b2_xy[..., 0] + b2_wh[..., 0] / 2.0, b2_xy[..., 1] + b2_wh[..., 1] / 2.0
-    inter_area = tf.maximum(tf.minimum(b1_xmax, b2_xmax) - tf.maximum(b1_xmin, b2_xmin), 0.0) * tf.maximum(
-        tf.minimum(b1_ymax, b2_ymax) - tf.maximum(b1_ymin, b2_ymin), 0.0)
+
+    inter_area = tf.maximum(tf.minimum(b1_xmax, b2_xmax) - tf.maximum(b1_xmin, b2_xmin), 0.0) * \
+                 tf.maximum(tf.minimum(b1_ymax, b2_ymax) - tf.maximum(b1_ymin, b2_ymin), 0.0)
+
     iou = inter_area / tf.maximum((b1_wh[..., 0] * b1_wh[..., 1]) + (b2_wh[..., 0] * b2_wh[..., 1]) - inter_area, 1e-7)
-    c_squared = tf.square(tf.maximum(b1_xmax, b2_xmax) - tf.minimum(b1_xmin, b2_xmin)) + tf.square(
-        tf.maximum(b1_ymax, b2_ymax) - tf.minimum(b1_ymin, b2_ymin))
+
+    c_squared = tf.square(tf.maximum(b1_xmax, b2_xmax) - tf.minimum(b1_xmin, b2_xmin)) + \
+                tf.square(tf.maximum(b1_ymax, b2_ymax) - tf.minimum(b1_ymin, b2_ymin))
+
     center_dist_squared = tf.square(b1_xy[..., 0] - b2_xy[..., 0]) + tf.square(b1_xy[..., 1] - b2_xy[..., 1])
     factor = (4.0 / (np.pi ** 2))
-    v = factor * tf.square(tf.math.atan(b1_wh[..., 0] / tf.maximum(b1_wh[..., 1], 1e-7)) - tf.math.atan(
-        b2_wh[..., 0] / tf.maximum(b2_wh[..., 1], 1e-7)))
+
+    v = factor * tf.square(tf.math.atan(b1_wh[..., 0] / tf.maximum(b1_wh[..., 1], 1e-7)) - \
+                           tf.math.atan(b2_wh[..., 0] / tf.maximum(b2_wh[..., 1], 1e-7)))
+
     alpha = v / tf.maximum((1.0 - iou) + v, 1e-7)
+
     return iou - (center_dist_squared / tf.maximum(c_squared, 1e-7)) - alpha * v
 
 
-# =======================================================
-# Η ΚΥΡΙΑ ΚΛΑΣΗ: YOLO11_OxfordPets
-# =======================================================
+# ---------------------------------------------------------
+# Main API Class: YOLO11_OxfordPets
+# ---------------------------------------------------------
 class YOLO11_OxfordPets:
 
     def __init__(self):
         self.name = 'YOLO11_Nano_OxfordPets'
 
-        # Υπερπαράμετροι ΜΟΝΟ για τη φάση ανάρρωσης (Pruning Fine-Tune)
-        self.fine_tune_epochs = 5  # Λίγες εποχές, ίσα για να αναρρώσει το Pruned μοντέλο
+        # Fine-tuning parameters designed for pruning recovery
+        self.fine_tune_epochs = 5
         self.batch_size = 16
 
-        # Πολύ μικρό Learning Rate για να μην καταστρέψει τη γνώση που του απέμεινε
+        # Conservative learning rate to prevent catastrophic forgetting during pruning recovery
         self.initial_learning_rate = 1e-4
         self.loss_function = 'YOLO_SOTA_Loss (CIoU + DFL + BCE)'
 
-        # Optimizer προσαρμοσμένος για σταθερό και απαλό fine-tuning
         self.optimizer = tf.keras.optimizers.SGD(
             learning_rate=self.initial_learning_rate,
             momentum=0.9,
@@ -69,6 +78,7 @@ class YOLO11_OxfordPets:
         self.best_model_metrics = {'monitor': 'mAP_50', 'mode': 'max'}
         self.header = ['train_loss', 'val_loss', 'mAP_50', 'mAP_50_95']
 
+        # Network architecture parameters
         self.target_size = (640, 640)
         self.grid_sizes = [80, 40, 20]
         self.reg_max = 16
@@ -76,10 +86,15 @@ class YOLO11_OxfordPets:
         self.num_classes = len(self.classes)
         self.class_to_id = {name.lower(): i for i, name in enumerate(self.classes)}
 
-        self.image_dir = "./datasets/oxford_pets/images"
-        self.annot_path = "./datasets/oxford_pets/annotations/xmls"
+        # Paths (Relative to the 'oop' directory)
+        self.image_dir = "../datasets/oxford_pets/images"
+        self.annot_path = "../datasets/oxford_pets/annotations/xmls"
 
-        self.log_dir = "logs/oop_experiments/oxford"
+        # Pretrained Weights & Logs
+        self.coco_pretrained_weights = "../weights/yolo11n_coco_pretrained.weights.h5"
+        self.baseline_model_weights = "../trained_models/yolo11n/oxford/oxford_yolo11n_pretrain.weights.h5"
+
+        self.log_dir = "../logs/oop_experiments/oxford"
         os.makedirs(self.log_dir, exist_ok=True)
 
         self.model_architecture = None
@@ -88,13 +103,13 @@ class YOLO11_OxfordPets:
         self.val_dataset = None
         self.all_image_files = []
 
-        print(f'\n[INIT] Αρχικοποίηση {self.name} (Service Class for Pruning)')
-        print(f'   - Fine Tune Εποχές: {self.fine_tune_epochs}')
-        print(f'   - Batch Size: {self.batch_size}')
-        print(f'   - Learning Rate για Ανάρρωση: {self.initial_learning_rate}')
+        print(f"\n[INFO] Initialized {self.name} API for Pruning Recovery.")
+        print(f"       - Recovery Epochs: {self.fine_tune_epochs}")
+        print(f"       - Batch Size: {self.batch_size}")
+        print(f"       - Recovery Learning Rate: {self.initial_learning_rate}")
 
     def build(self, print_summary=True):
-        print("[BUILD] Χτίσιμο αρχιτεκτονικής YOLO11-Nano...")
+        print(f"[INFO] Constructing architecture for {self.name}...")
         import my_models.yolo_model11 as yolo11_module
         yolo11_module.MODEL_CONFIGS["nano"]["nc"] = self.num_classes
 
@@ -109,13 +124,13 @@ class YOLO11_OxfordPets:
         return model
 
     def data_preprocessing(self):
-        print("[DATA] Εκκίνηση προετοιμασίας δεδομένων (Mosaic, Letterbox)...")
+        print("[INFO] Initializing dataset generator (Mosaic & Letterbox)...")
 
         if os.path.exists(self.image_dir):
             self.all_image_files = [f for f in os.listdir(self.image_dir) if f.lower().endswith('.jpg')]
 
         if not self.all_image_files:
-            print(f"❌ ΣΦΑΛΜΑ: Δεν βρέθηκαν εικόνες στο {self.image_dir}")
+            print(f"[ERROR] No images found at {self.image_dir}. Please verify dataset path.")
             sys.exit(1)
 
         split_index = int(len(self.all_image_files) * 0.8)
@@ -124,7 +139,10 @@ class YOLO11_OxfordPets:
             img_path = os.path.join(self.image_dir, img_file)
             xml_name = img_file.rsplit('.', 1)[0] + '.xml'
             xml_path = os.path.join(self.annot_path, xml_name)
-            if not os.path.exists(xml_path): return None, None, None
+
+            if not os.path.exists(xml_path):
+                return None, None, None
+
             try:
                 tree = ET.parse(xml_path)
                 root = tree.getroot()
@@ -147,10 +165,12 @@ class YOLO11_OxfordPets:
             indices = [img_file] + random.sample(self.all_image_files, 3)
             mosaic_img = np.full((h_tgt, w_tgt, 3), 128, dtype=np.uint8)
             mosaic_boxes, mosaic_classes = [], []
+
             for i, file in enumerate(indices):
                 img, boxes, classes = load_raw(file)
                 if img is None or len(boxes) == 0: continue
                 h, w, _ = img.shape
+
                 if i == 0:
                     x1a, y1a, x2a, y2a = 0, 0, xc, yc
                     x1b, y1b, x2b, y2b = w - xc, h - yc, w, h
@@ -163,22 +183,28 @@ class YOLO11_OxfordPets:
                 elif i == 3:
                     x1a, y1a, x2a, y2a = xc, yc, w_tgt, h_tgt
                     x1b, y1b, x2b, y2b = 0, 0, w_tgt - xc, h_tgt - yc
+
                 x1b, y1b = max(0, x1b), max(0, y1b)
                 x2b, y2b = min(w, x2b), min(h, y2b)
                 pad_w, pad_h = (x2a - x1a), (y2a - y1a)
+
                 if x2b - x1b > pad_w: x2b = x1b + pad_w
                 if y2b - y1b > pad_h: y2b = y1b + pad_h
+
                 mosaic_img[y1a:y1a + (y2b - y1b), x1a:x1a + (x2b - x1b)] = img[y1b:y2b, x1b:x2b]
                 pad_x, pad_y = x1a - x1b, y1a - y1b
+
                 for b_idx, box in enumerate(boxes):
                     xmin, ymin, xmax, ymax = box[0] + pad_x, box[1] + pad_y, box[2] + pad_x, box[3] + pad_y
                     xmin, ymin = max(x1a, min(xmin, x2a)), max(y1a, min(ymin, y2a))
                     xmax, ymax = max(x1a, min(xmax, x2a)), max(y1a, min(ymax, y2a))
+
                     if (xmax - xmin) > 5 and (ymax - ymin) > 5:
                         mosaic_boxes.append(
                             [(xmin + xmax) / 2 / w_tgt, (ymin + ymax) / 2 / h_tgt, (xmax - xmin) / w_tgt,
                              (ymax - ymin) / h_tgt])
                         mosaic_classes.append(classes[b_idx])
+
             return mosaic_img.astype(np.float32) / 255.0, mosaic_boxes, mosaic_classes
 
         def load_letterbox(img_file):
@@ -188,10 +214,14 @@ class YOLO11_OxfordPets:
             r = min(self.target_size[0] / shape[0], self.target_size[1] / shape[1])
             new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
             dw, dh = (self.target_size[1] - new_unpad[0]) / 2, (self.target_size[0] - new_unpad[1]) / 2
-            if shape[::-1] != new_unpad: img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+
+            if shape[::-1] != new_unpad:
+                img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+
             top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
             left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
             img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(128, 128, 128))
+
             tr_boxes = [[(((b[0] + b[2]) / 2) * r + left) / self.target_size[1],
                          (((b[1] + b[3]) / 2) * r + top) / self.target_size[0],
                          ((b[2] - b[0]) * r) / self.target_size[1], ((b[3] - b[1]) * r) / self.target_size[0]] for b in
@@ -208,6 +238,7 @@ class YOLO11_OxfordPets:
                 scale_idx = 0 if max_dim < 64 else 1 if max_dim < 128 else 2
                 grid_size = self.grid_sizes[scale_idx]
                 gx, gy = int(cx * grid_size), int(cy * grid_size)
+
                 if 0 <= gx < grid_size and 0 <= gy < grid_size:
                     target_grids[scale_idx][gy, gx, 0] = 1.0
                     target_grids[scale_idx][gy, gx, 1:5] = [cx, cy, w, h]
@@ -229,6 +260,7 @@ class YOLO11_OxfordPets:
                     image, boxes, classes = load_letterbox(img_file)
 
                 if image is None or len(boxes) == 0: continue
+
                 boxes_padded, classes_padded = np.zeros((100, 4), dtype=np.float32), np.zeros((100,),
                                                                                               dtype=np.float32) - 1.0
                 num_boxes = min(len(boxes), 100)
@@ -236,6 +268,7 @@ class YOLO11_OxfordPets:
                                                                                 dtype=np.float32), np.array(
                     classes[:num_boxes], dtype=np.float32)
                 t1, t2, t3 = build_targs(boxes, classes)
+
                 yield image, boxes_padded, classes_padded, t1, t2, t3, is_val
 
         @tf.function
@@ -268,31 +301,29 @@ class YOLO11_OxfordPets:
                                                                                          drop_remainder=True).prefetch(
             tf.data.AUTOTUNE)
 
-        print(f"✅ Δεδομένα έτοιμα. Σύνολο εικόνων: {len(self.all_image_files)}")
+        print(f"[INFO] Dataset successfully loaded. Total samples: {len(self.all_image_files)}")
         return self.train_dataset, self.val_dataset
 
-    # =========================================================================
-    # 1. TRAIN: Κενή (αφού παραδίδεις ήδη εκπαιδευμένο μοντέλο)
-    # =========================================================================
+    # ---------------------------------------------------------
+    # Training Loop (Bypassed since baseline model is provided)
+    # ---------------------------------------------------------
     def train(self, fit_flag=True, print_summary=False):
-        print("▶️ [TRAIN] Η μέθοδος train παρακάμπτεται επειδή χρησιμοποιούμε ήδη εκπαιδευμένο μοντέλο.")
-        print("   (Σύμφωνα με τον κανόνα: 'if we have a pretrained model this method is not necessary')")
+        print("[INFO] Primary training method bypassed.")
+        print(f"[INFO] The baseline model (mAP ~92.7%) should be loaded from: {self.baseline_model_weights}")
         return None
 
-    # =========================================================================
-    # 2. FINE_TUNE: Η Καρδιά του Pruning Experiment του Καθηγητή
-    # =========================================================================
+    # ---------------------------------------------------------
+    # Fine-Tuning Loop (Pruning Recovery Mechanism)
+    # ---------------------------------------------------------
     def fine_tune(self, path_to_save, new_model=None, print_summary=False, new_fine_tune_epochs=None):
         print("\n" + "=" * 50)
-        print("[FINE TUNE] Εκκίνηση Φάσης Ανάρρωσης (Pruning Fine-Tune)...")
+        print("[INFO] Initiating Pruning Recovery (Fine-Tuning) phase...")
 
-        # ΕΔΩ ΕΙΝΑΙ ΟΛΗ Η ΛΟΓΙΚΗ!
         if new_model is None:
-            print(
-                "❌ ΣΦΑΛΜΑ: Για να τρέξει η fine_tune σε αυτό το API, πρέπει να δοθεί ένα μοντέλο (π.χ. το Pruned) στο όρισμα 'new_model'.")
+            print("[ERROR] The fine_tune method requires an external 'new_model' (e.g., pruned model) to operate.")
             return None, None
 
-        print("🔄 Φορτώθηκε το εξωτερικό (Pruned) μοντέλο επιτυχώς.")
+        print("[INFO] External pruned model loaded successfully.")
         model = new_model
 
         fine_tune_epochs = new_fine_tune_epochs if new_fine_tune_epochs else self.fine_tune_epochs
@@ -300,7 +331,7 @@ class YOLO11_OxfordPets:
         if not self.train_dataset:
             self.data_preprocessing()
 
-        # Ορίζουμε τον SOTA Optimizer ΜΟΝΟ για την ανάρρωση
+        # Initialize Optimizer explicitly for the incoming model
         dummy_img = tf.zeros((1, 640, 640, 3))
         _ = model(dummy_img, training=True)
         self.optimizer.build(model.trainable_variables)
@@ -329,12 +360,13 @@ class YOLO11_OxfordPets:
                 grid_x, grid_y = tf.reshape(tf.meshgrid(col, row)[0], [1, grid_size, grid_size]), tf.reshape(
                     tf.meshgrid(col, row)[1], [1, grid_size, grid_size])
                 pred_cx, pred_cy = (grid_x + 0.5 + (r - l) / 2.0) / float(grid_size), (
-                            grid_y + 0.5 + (b - t) / 2.0) / float(grid_size)
+                        grid_y + 0.5 + (b - t) / 2.0) / float(grid_size)
                 pred_w, pred_h = (l + r) / float(grid_size), (t + b) / float(grid_size)
 
                 ciou = bbox_ciou(tf.stack([pred_cx, pred_cy], axis=-1), tf.stack([pred_w, pred_h], axis=-1),
                                  t_boxes[..., 0:2], t_boxes[..., 2:4])
                 box_loss = tf.reduce_sum((1.0 - ciou) * mask) / normalizer
+
                 loss += 0.5 * cls_loss + 7.5 * box_loss
             return loss
 
@@ -377,6 +409,7 @@ class YOLO11_OxfordPets:
             nms_boxes_cyxhwh = tf.concat([(x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1], axis=-1)
             mask = tf.sequence_mask(nms_out.valid_detections, maxlen=100)
             final_classes = tf.where(mask, nms_out.nmsed_classes, tf.fill(tf.shape(nms_out.nmsed_classes), -1.0))
+
             return {"boxes": nms_boxes_cyxhwh, "classes": final_classes, "confidence": nms_out.nmsed_scores}
 
         @tf.function(jit_compile=False)
@@ -425,13 +458,14 @@ class YOLO11_OxfordPets:
             history_dict['mAP_50'].append(map_50)
             history_dict['mAP_50_95'].append(map_50_95)
 
-            print(f"📊 Epoch {epoch + 1} -> Train Loss: {t_loss:.4f} | Val Loss: {v_loss:.4f} | mAP@0.50: {map_50:.4f}")
+            print(
+                f"[METRICS] Epoch {epoch + 1} | Train Loss: {t_loss:.4f} | Val Loss: {v_loss:.4f} | mAP@0.50: {map_50:.4f}")
 
             if epoch == 0 or map_50 >= max(history_dict['mAP_50'][:-1]):
                 model.save_weights(path_to_save)
 
         best_info = self.get_best_epoch_info(history_dict)
-        print(f"\n✅ Ανάρρωση Ολοκληρώθηκε! Καλύτερα Metrics: {best_info}")
+        print(f"\n[INFO] Pruning Recovery Completed. Best Metrics: {best_info}")
 
         new_model = build_yolo11_model(variant="nano", input_shape=(640, 640, 3))
         new_model.load_weights(path_to_save)
@@ -449,7 +483,7 @@ class YOLO11_OxfordPets:
         elif mode == 'min':
             best_epoch_ix = np.argmin(metric_per_epoch)
         else:
-            raise ValueError('mode should be either min or max')
+            raise ValueError('Mode should be either min or max')
 
         new_history = {key: hist_dict[key][best_epoch_ix] for key in self.header if key in hist_dict}
         if metrics: new_history = dict(new_history, **dict(metrics))
@@ -458,14 +492,16 @@ class YOLO11_OxfordPets:
 
     def extract_monitoring_metric_value(self, model=None):
         if not self.model_history:
-            print("⚠️ Δεν υπάρχει history! Βεβαιωθείτε ότι έτρεξε η fine_tune.")
+            print("[WARNING] No training history found. Ensure fine_tune was executed.")
             return 0.0
+
         best_info = self.get_best_epoch_info(self.model_history)
         monitor_metric = self.best_model_metrics['monitor']
+
         if monitor_metric in best_info:
             metric_val = best_info[monitor_metric]
-            print(f"[METRIC] Το {monitor_metric} του εκπαιδευμένου μοντέλου είναι: {metric_val:.4f}")
+            print(f"[EVALUATION] Retained metric '{monitor_metric}': {metric_val:.4f}")
             return metric_val
         else:
-            print(f"❌ ΣΦΑΛΜΑ: Η μετρική '{monitor_metric}' δεν βρέθηκε στο history!")
+            print(f"[ERROR] Metric '{monitor_metric}' not found in history.")
             return 0.0
