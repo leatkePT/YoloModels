@@ -96,7 +96,7 @@ def CBS(x, filters, kernel_size, strides=1, name=None):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding=padding_type, use_bias=False,
                       name=name + '_conv' if name else None)(x)
     x = layers.BatchNormalization(momentum=0.03, epsilon=0.001, name=name + '_bn' if name else None)(x)
-    return layers.LeakyReLU(negative_slope=0.1, name=name + '_lrelu' if name else None)(x)
+    return layers.LeakyReLU(alpha=0.1, name=name + '_lrelu' if name else None)(x)
 
 
 def ELAN_Block(x, mid_filters, out_filters, name=None):
