@@ -8,23 +8,27 @@ Before running the experiments, ensure that all dependencies are installed. The 
 
 ```bash
 pip install -r requirements.txt
-(Key dependencies include tensorflow, keras-cv, opencv-python, and tqdm)
+(Key dependencies include tensorflow, keras-cv, opencv-python, pycocotools, and tqdm)
 
 2. Repository & Directory Structure
 To ensure the relative paths within the OOP classes work correctly, your local execution environment should match the following structure.
 
-Note: The optimal baseline .h5 weights are provided in this repository. However, due to storage limits, the image datasets must be downloaded and placed manually in a datasets/ directory.
+Note: The optimal baseline .h5 weights are expected to be located in the trained_models/ directory. Due to storage limits, the image datasets must be downloaded and placed manually in a datasets/ directory.
+
+Plaintext
 YoloModels/ (Root)
 ├── my_models/                             # YOLO architecture builders
 ├── oop/                                   # The API Wrapper Classes
 │   ├── YOLO11_OxfordPets_Model.py
 │   ├── YOLO11_GlobalWheat_Model.py
+│   ├── YOLO11_PascalVOC_Model.py          # YOLOv11 for PASCAL VOC
 │   ├── YOLO7t_OxfordPets_Model.py
 │   └── YOLO7t_GlobalWheat_Model.py
 ├── trained_models/                        # Pre-trained baselines for pruning
 │   ├── yolo11n/
 │   │   ├── oxford/oxford_yolo11n_pretrain.weights.h5
-│   │   └── wheathead/yolo11_nano_Global_Wheat_Preatrained.weights.h5
+│   │   ├── wheathead/yolo11_nano_Global_Wheat_Preatrained.weights.h5
+│   │   └── pascal/yolov11_nano_PASCAL_VOC_0712_11n_final.weights.h5
 │   └── yolo7t/
 │       ├── oxford/yolov7_tiny_Oxford_Pets_Pretrained.weights.h5
 │       └── wheathead/yolov7_tiny_Global_Wheat_Pretrained.weights.h5
@@ -35,6 +39,7 @@ YoloModels/ (Root)
 └── OOP_EXPERIMENTS.md                     # This documentation file
 3. Local Dataset Configuration
 Please download the datasets and place them in the datasets/ directory at the root of the repository exactly as shown below:
+
 A. Oxford Pets Dataset
 Plaintext
 datasets/
@@ -48,6 +53,17 @@ datasets/
 └── global_wheat/
     ├── train/                # Contains all training .jpg images
     └── train.csv             # The original CSV annotations file
+C. PASCAL VOC Dataset
+Plaintext
+datasets/
+└── pascal_voc/
+    └── VOCdevkit/
+        ├── VOC2007/
+        │   ├── JPEGImages/   # Contains all .jpg images for 2007
+        │   └── Annotations/  # Contains all corresponding .xml files for 2007
+        └── VOC2012/
+            ├── JPEGImages/   # Contains all .jpg images for 2012
+            └── Annotations/  # Contains all corresponding .xml files for 2012
 4. API Usage (Pruning Integration)
 The API is built to bypass the primary train() method, as the baseline models are already fully trained and located in trained_models/.
 
@@ -57,21 +73,22 @@ Example Implementation
 Python
 # Choose the architecture and dataset you want to experiment on:
 from oop.YOLO11_OxfordPets_Model import YOLO11_OxfordPets
+# or: from oop.YOLO11_PascalVOC_Model import YOLO11_PascalVOC
 # or: from oop.YOLO11_GlobalWheat_Model import YOLO11_GlobalWheat
 # or: from oop.YOLO7t_OxfordPets_Model import YOLO7t_OxfordPets
 # or: from oop.YOLO7t_GlobalWheat_Model import YOLO7t_GlobalWheat
 
-# 1. Initialize the API
-api = YOLO11_OxfordPets()
+# 1. Initialize the API (e.g., for PASCAL VOC)
+api = YOLO11_PascalVOC()
 
 # 2. Load the baseline model and apply your pruning methodology
-baseline_path = "trained_models/yolo11n/oxford/oxford_yolo11n_pretrain.weights.h5"
+baseline_path = "trained_models/yolo11n/pascal/yolov11_nano_PASCAL_VOC_0712_11n_final.weights.h5"
 # ... [Insert your pruning logic here] ...
 my_pruned_model = ... # The resulting pruned tf.keras.Model
 
 # 3. Recover the pruned model
 recovered_model, history = api.fine_tune(
-    path_to_save="logs/recovered_model.weights.h5",
+    path_to_save="logs/oop_experiments/pascal/recovered_model.weights.h5",
     new_model=my_pruned_model,
     new_fine_tune_epochs=5
 )
