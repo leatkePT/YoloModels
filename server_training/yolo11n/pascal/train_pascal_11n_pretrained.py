@@ -77,7 +77,7 @@ for year in PASCAL_YEARS:
                 all_image_data.append((os.path.join(img_dir, img_name), os.path.join(ann_dir, xml_name)))
 
 if len(all_image_data) == 0:
-    print(f"\n❌ ΣΦΑΛΜΑ: Δεν βρέθηκαν εικόνες στα paths του PASCAL VOC!")
+    print(f"\n ΣΦΑΛΜΑ: Δεν βρέθηκαν εικόνες στα paths του PASCAL VOC!")
     sys.exit(1)
 
 random.seed(42)
@@ -86,7 +86,7 @@ random.shuffle(all_image_data)
 # =======================================================
 # 2. DATA LOADING (ΜΕ RAM CACHING ΓΙΑ ΤΑΧΥΤΗΤΑ!)
 # =======================================================
-print("\n🚀 Φόρτωση όλων των XML Annotations στη RAM για μέγιστη ταχύτητα...")
+print("\n Φόρτωση όλων των XML Annotations στη RAM για μέγιστη ταχύτητα...")
 xml_cache = {}
 for img_path, xml_path in tqdm(all_image_data, desc="Caching XMLs"):
     if os.path.exists(xml_path):
@@ -106,7 +106,7 @@ for img_path, xml_path in tqdm(all_image_data, desc="Caching XMLs"):
             xml_cache[img_path] = (np.array(boxes, dtype=np.float32), np.array(classes, dtype=np.int32))
         except:
             pass
-print(f"✅ Φορτώθηκαν επιτυχώς {len(xml_cache)} annotations!")
+print(f" Φορτώθηκαν επιτυχώς {len(xml_cache)} annotations!")
 
 
 def load_raw_image_and_boxes(data_tuple):
@@ -392,7 +392,7 @@ def train_yolo():
                 lines = list(csv.reader(f))
                 if len(lines) > 1:
                     start_epoch = int(lines[-1][0])
-                    print(f"\n🔄 ΑΝΙΧΝΕΥΤΗΚΕ ΔΙΑΚΟΠΗ: Συνέχιση από την Εποχή {start_epoch + 1}")
+                    print(f"\n ΑΝΙΧΝΕΥΤΗΚΕ ΔΙΑΚΟΠΗ: Συνέχιση από την Εποχή {start_epoch + 1}")
         except Exception as e:
             pass
 
@@ -405,7 +405,7 @@ def train_yolo():
     model = build_yolo11_model(variant="nano", input_shape=(640, 640, 3))
 
     if start_epoch > 0 and os.path.exists(LATEST_CHECKPOINT_PATH):
-        print(f"🔄 Φόρτωση Checkpoint: {LATEST_CHECKPOINT_PATH}")
+        print(f" Φόρτωση Checkpoint: {LATEST_CHECKPOINT_PATH}")
         model.load_weights(LATEST_CHECKPOINT_PATH)
     else:
         if os.path.exists(PRETRAINED_WEIGHTS_PATH):
@@ -539,11 +539,11 @@ def train_yolo():
         else:
             val_loss_total, num_val_batches = 0.0, 1
             map_50, map_50_95 = 0.0, 0.0
-            print("⏳ To Evaluation παραλείφθηκε.")
+            print(" To Evaluation παραλείφθηκε.")
 
         epoch_time = time.time() - epoch_start_time
         print(
-            f"📊 Εποχή {epoch + 1} -> Train Loss: {train_loss_total / max(1, num_train_batches):.4f} | Val Loss: {val_loss_total / max(1, num_val_batches):.4f} | mAP@0.50: {map_50:.4f} | Χρόνος: {epoch_time:.1f}s")
+            f" Εποχή {epoch + 1} -> Train Loss: {train_loss_total / max(1, num_train_batches):.4f} | Val Loss: {val_loss_total / max(1, num_val_batches):.4f} | mAP@0.50: {map_50:.4f} | Χρόνος: {epoch_time:.1f}s")
 
         with open(log_file, mode='a', newline='') as f:
             csv.writer(f).writerow([epoch + 1, round(train_loss_total / max(1, num_train_batches), 4),
